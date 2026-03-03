@@ -1,0 +1,7 @@
+*.html
+__pycache__/
+*.pyc
+*.pyo
+amazon/
+2026FebReports/
+.DS_Store
