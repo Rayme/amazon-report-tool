@@ -8,7 +8,6 @@ Amazon Sales Report Analyzer - 通用型销售报告分析工具
 import os
 import re
 import csv
-import json
 import argparse
 import ssl
 import urllib.request
@@ -16,7 +15,7 @@ import urllib.error
 from datetime import datetime
 from collections import defaultdict
 from html import escape
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 
 # ==================== 配置 ====================
 DEFAULT_REPORTS_DIR = "amazon_reports"
@@ -200,11 +199,7 @@ def scan_reports_directory(reports_dir):
 # ==================== 数据读取 ====================
 def load_transaction_report(reports_dir, country):
     """从Transaction Report提取SKU销售数据"""
-    # 根据国家代码查找对应的Transaction文件
-    country_prefix_map = {'DE': 'DE', 'IT': 'IT', 'FR': 'FR', 'ES': 'ES', 'UK': 'UK'}
-    prefix = country_prefix_map.get(country, country)
-    
-    files = [f for f in os.listdir(reports_dir) if 'Transaction' in f and f.startswith(prefix)]
+    files = [f for f in os.listdir(reports_dir) if 'Transaction' in f and f.startswith(country)]
     if not files:
         return [], {}
     
@@ -279,14 +274,8 @@ def load_transaction_report(reports_dir, country):
 
 def load_business_report(reports_dir, country):
     """读取Business Report，如果没有则尝试从Transaction Report加载"""
-    # Match files containing "BusinessReport"
     all_files = os.listdir(reports_dir)
-    
-    # 根据国家代码查找对应的BusinessReport文件
-    country_prefix_map = {'DE': 'DE', 'IT': 'IT', 'FR': 'FR', 'ES': 'ES', 'UK': 'UK'}
-    prefix = country_prefix_map.get(country, country)
-    
-    files = [f for f in all_files if 'BusinessReport' in f and f.startswith(prefix)]
+    files = [f for f in all_files if 'BusinessReport' in f and f.startswith(country)]
     
     if not files:
         return load_transaction_report(reports_dir, country)
@@ -639,10 +628,6 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
         for p in country_data[country]['products']:
             if p['sales'] > 0 or p['quantity'] > 0:
                 sales_usd = p['sales'] * rates['EUR_USD'] if cfg['currency'] == 'EUR' else p['sales'] * rates['GBP_USD']
-                # 获取该SKU的退货数量
-                sku_return_count = 0
-                if p['sku'] in sku_returns:
-                    sku_return_count = sku_returns[p['sku']]['count']
                 all_skus.append({
                     'sku': p['sku'],
                     'title': p['title'],
@@ -651,8 +636,7 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
                     'sales': p['sales'],
                     'sales_usd': sales_usd,
                     'conv_rate': p.get('conv_rate', 0),
-                    'sessions': p.get('sessions', 0),
-                    'returns': sku_return_count
+                    'sessions': p.get('sessions', 0)
                 })
     
     all_skus = sorted(all_skus, key=lambda x: x['sales_usd'], reverse=True)
@@ -660,7 +644,6 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
     total_sku_qty = sum(s.get('quantity', 0) for s in all_skus)
     weighted_conv_sum = sum(s.get('sessions', 0) * s.get('conv_rate', 0) for s in all_skus)
     avg_conv_rate = weighted_conv_sum / total_sku_sessions if total_sku_sessions > 0 else 0
-    avg_return_rate = (total_returns / total_sku_qty * 100) if total_sku_qty > 0 else 0
     
     # 获取国家货币符号
     country_symbols = {COUNTRY_MAP[c]['name']: COUNTRY_MAP[c]['symbol'] for c in target_countries}
@@ -669,9 +652,6 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
         conv_rate = item.get('conv_rate', 0)
         conv_rate_str = f"{conv_rate:.2f}%" if conv_rate > 0 else "-"
         symbol = country_symbols.get(item['country'], '€')
-        return_qty = item.get('returns', 0)
-        return_rate = (return_qty / item['quantity'] * 100) if item['quantity'] > 0 else 0
-        return_rate_str = f"{return_rate:.1f}%" if return_rate > 0 else "-"
         sku_rows += f"""<tr>
             <td><code>{escape(item['sku'])}</code></td>
             <td class="num">{item.get('sessions', 0):,}</td>
@@ -865,7 +845,7 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
             
             let filtered = rows.filter(row => {{
                 const cells = row.querySelectorAll('td');
-                const rowCountry = cells[1].textContent.toLowerCase();
+                const rowCountry = cells[2].textContent.toLowerCase();
                 const rowSku = cells[0].textContent.toLowerCase();
                 return (country === '' || rowCountry.includes(country)) &&
                        (sku === '' || rowSku.includes(sku));
@@ -931,7 +911,7 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
         
         document.querySelectorAll('#skuTable tbody tr').forEach(row => {{
             const cells = row.querySelectorAll('td');
-            const countryText = cells[2].textContent;
+            const countryText = cells[3].textContent;
             const isEur = countryText.includes('德国') || countryText.includes('意大利') || countryText.includes('法国') || countryText.includes('西班牙');
             const rate = isEur ? rateEur : rateGbp;
             const defaultRate = isEur ? DEFAULT_EUR_RATE : DEFAULT_GBP_RATE;
