@@ -199,7 +199,12 @@ def scan_reports_directory(reports_dir):
 # ==================== 数据读取 ====================
 def load_transaction_report(reports_dir, country):
     """从Transaction Report提取SKU销售数据"""
-    files = [f for f in os.listdir(reports_dir) if 'Transaction' in f and f.startswith(country)]
+    all_files = os.listdir(reports_dir)
+    files = [f for f in all_files if 'Transaction' in f and f.startswith(country)]
+    if not files:
+        files = [f for f in all_files if 'Transaction' in f and country in f]
+    if not files:
+        files = [f for f in all_files if 'Transaction' in f]
     if not files:
         return [], {}
     
@@ -276,6 +281,10 @@ def load_business_report(reports_dir, country):
     """读取Business Report，如果没有则尝试从Transaction Report加载"""
     all_files = os.listdir(reports_dir)
     files = [f for f in all_files if 'BusinessReport' in f and f.startswith(country)]
+    if not files:
+        files = [f for f in all_files if 'BusinessReport' in f and country in f]
+    if not files:
+        files = [f for f in all_files if 'BusinessReport' in f]
     
     if not files:
         return load_transaction_report(reports_dir, country)
