@@ -9,9 +9,6 @@ import os
 import re
 import csv
 import argparse
-import ssl
-import urllib.request
-import urllib.error
 from datetime import datetime
 from collections import defaultdict
 from html import escape
@@ -26,56 +23,15 @@ COUNTRY_MAP = {
     'IT': {'name': '意大利', 'currency': 'EUR', 'symbol': '€'},
     'FR': {'name': '法国', 'currency': 'EUR', 'symbol': '€'},
     'ES': {'name': '西班牙', 'currency': 'EUR', 'symbol': '€'},
-    'UK': {'name': '英国', 'currency': 'GBP', 'symbol': '£'}
+    'UK': {'name': '英国', 'currency': 'GBP', 'symbol': '£'},
+    'US': {'name': '美国', 'currency': 'USD', 'symbol': '$'}
 }
 
 # ==================== 汇率获取 ====================
 def fetch_exchange_rates() -> Dict[str, float]:
-    """从investing.com获取实时汇率"""
-    rates = FALLBACK_RATES.copy()
-    
-    url_eur_usd = "https://cn.investing.com/currencies/eur-usd"
-    url_gbp_usd = "https://cn.investing.com/currencies/gbp-usd"
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    }
-    
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    
-    try:
-        req = urllib.request.Request(url_eur_usd, headers=headers)
-        with urllib.request.urlopen(req, timeout=10, context=context) as response:
-            html = response.read().decode('utf-8')
-        
-        match = re.search(r'last[\s\S]*?([\d,]+\.?\d*)\s*</span>', html)
-        if match:
-            eur_rate = parse_number(match.group(1))
-            if eur_rate > 0:
-                rates['EUR_USD'] = eur_rate
-                print(f"✓ EUR/USD 汇率: {eur_rate:.4f}")
-    except Exception as e:
-        print(f"⚠ 获取 EUR/USD 汇率失败: {e}")
-    
-    try:
-        req = urllib.request.Request(url_gbp_usd, headers=headers)
-        with urllib.request.urlopen(req, timeout=10, context=context) as response:
-            html = response.read().decode('utf-8')
-        
-        match = re.search(r'last[\s\S]*?([\d,]+\.?\d*)\s*</span>', html)
-        if match:
-            gbp_rate = parse_number(match.group(1))
-            if gbp_rate > 0:
-                rates['GBP_USD'] = gbp_rate
-                print(f"✓ GBP/USD 汇率: {gbp_rate:.4f}")
-    except Exception as e:
-        print(f"⚠ 获取 GBP/USD 汇率失败: {e}")
-    
-    return rates
+    """获取汇率（使用备用汇率）"""
+    print(f"汇率: EUR→USD: {FALLBACK_RATES['EUR_USD']:.4f}, GBP→USD: {FALLBACK_RATES['GBP_USD']:.4f}")
+    return FALLBACK_RATES.copy()
 
 # ==================== 工具函数 ====================
 def parse_number(value: Any) -> float:
@@ -91,7 +47,7 @@ def parse_number(value: Any) -> float:
             return float(value)
         except ValueError:
             return 0.0
-    value = re.sub(r'[€£$\s]', '', value)
+    value = re.sub(r'[€£$US\s]', '', value)
     if ',' in value and '.' in value:
         if value.find(',') < value.find('.'):
             value = value.replace(',', '')
@@ -231,11 +187,13 @@ def load_transaction_report(reports_dir, country):
                 indices['sku'] = i
             elif 'description' in h_lower and 'product' not in h_lower:
                 indices['title'] = i
-            elif h_lower in ['quantity', 'menge']:
-                indices['qty'] = i
-            elif 'product sales' in h_lower or h_lower == 'umsätze':
-                indices['sales'] = i
-            elif h_lower in ['type', 'typ']:
+            elif h_lower in ['quantity', 'menge', 'quantité', 'cantidad', 'quantità']:
+                if 'qty' not in indices:
+                    indices['qty'] = i
+            elif h_lower == 'product sales' or h_lower in ['umsätze', 'ventes de produits', 'ventas de productos', 'vendite prodotti', 'vendite']:
+                if 'sales' not in indices:
+                    indices['sales'] = i
+            elif h_lower in ['type', 'typ', 'tipo']:
                 indices['type'] = i
         
         for row in reader:
@@ -243,7 +201,8 @@ def load_transaction_report(reports_dir, country):
                 continue
             
             tx_type = row[indices.get('type', 0)].lower() if indices.get('type') and len(row) > indices.get('type', 0) else ""
-            if 'order' not in tx_type and 'bestellung' not in tx_type:
+            order_keywords = ['order', 'bestellung', 'commande', 'pedido', 'ordine']
+            if not any(kw in tx_type for kw in order_keywords):
                 continue
             
             sku = row[indices.get('sku', 0)].strip() if indices.get('sku') and len(row) > indices.get('sku', 0) else ""
@@ -309,16 +268,18 @@ def load_business_report(reports_dir, country):
             elif '标题' in h or 'title' in h_lower:
                 if 'title' not in indices:
                     indices['title'] = i
-            elif h == '已订购商品数量' or (h_lower == 'ordered' and 'b2b' not in h_lower):
-                if 'qty' not in indices:
+            elif '已订购商品数量' in h or h == 'Ordered' or (h_lower == 'ordered' and 'b2b' not in h_lower):
+                if 'qty' not in indices and '- b2b' not in h_lower:
                     indices['qty'] = i
-            elif h == '已订购商品销售额' or (h_lower == 'sales' and 'b2b' not in h_lower and 'refund' not in h_lower):
-                if 'sales' not in indices:
+            elif '已订购商品销售额' in h or h == 'Sales' or (h_lower == 'sales' and 'b2b' not in h_lower and 'refund' not in h_lower):
+                if 'sales' not in indices and '- b2b' not in h_lower:
                     indices['sales'] = i
-            elif '会话数' in h and 'sessions' not in indices:
-                indices['sessions'] = i
-            elif '商品会话百分比' in h and 'conv_rate' not in indices:
-                indices['conv_rate'] = i
+            elif ('会话' in h or 'session' in h_lower) and 'sessions' not in indices:
+                if '总计' in h or 'total' in h_lower:
+                    indices['sessions'] = i
+            elif ('商品会话百分比' in h or '转化率' in h or 'conversion' in h_lower) and 'conv_rate' not in indices:
+                if 'b2b' not in h_lower:
+                    indices['conv_rate'] = i
         
         for row in reader:
             if len(row) <= max(indices.get('sku', 0), indices.get('qty', 0), indices.get('sales', 0)):
@@ -360,7 +321,7 @@ def load_returns_report(reports_dir):
     """读取Returns Report"""
     files = [f for f in os.listdir(reports_dir) if 'return' in f.lower() or '退货' in f]
     if not files:
-        return [], {}, [], {}
+        return [], {}, {}, []
     
     filepath = os.path.join(reports_dir, files[0])
     returns = []
@@ -495,14 +456,24 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
     
     # 加载各国数据
     country_data = {}
+    has_business_data = False
+    has_transaction_data = False
+    
     for country in target_countries:
         products, summary = load_business_report(reports_dir, country)
+        has_sessions = summary.get('sessions', 0) > 0
+        has_conv = summary.get('conversion_rate', 0) > 0
+        if has_sessions or has_conv:
+            has_business_data = True
+        if summary.get('total_sales', 0) > 0 or summary.get('orders', 0) > 0:
+            has_transaction_data = True
         country_data[country] = {
             'products': products,
             'sessions': summary.get('sessions', 0),
             'conversion_rate': summary.get('conversion_rate', 0),
             'orders': summary.get('orders', 0),
-            'total_sales': summary.get('total_sales', 0)
+            'total_sales': summary.get('total_sales', 0),
+            'has_business': has_sessions or has_conv
         }
     
     # 加载退货数据
@@ -510,6 +481,7 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
     sku_returns = defaultdict(lambda: {'count': 0, 'reasons': defaultdict(int)})
     reason_dist = defaultdict(int)
     total_returns = len(returns)
+    has_returns = total_returns > 0
     for r in returns:
         sku_returns[r['sku']]['count'] += 1
         if r['reason']:
@@ -565,14 +537,16 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
             ctr = (ads.get('clicks', 0) / ads.get('impressions', 1) * 100) if ads.get('impressions', 0) > 0 else 0
             cvr = (ads.get('orders', 0) / ads.get('clicks', 1) * 100) if ads.get('clicks', 0) > 0 else 0
             acos = (ads_spend / ads.get('sales', 1) * 100) if ads.get('sales', 0) > 0 else 0
+            session_cell = f'<td class="num">{int(sessions):,}</td>' if has_business_data else ''
+            conv_cell = f'<td class="num">{d["conversion_rate"]:.1f}%</td>' if has_business_data else ''
             rows += f"""<tr>
                 <td>{cfg['name']}</td>
-                <td class="num">{int(sessions):,}</td>
+                {session_cell}
                 <td class="num">{cfg['symbol']}{sales:,.2f}</td>
                 <td class="num">${sales_usd:,.2f}</td>
                 <td class="num">{int(orders)}</td>
                 <td class="num">{cfg['symbol']}{aov:,.2f}</td>
-                <td class="num">{d['conversion_rate']:.1f}%</td>
+                {conv_cell}
                 <td class="num">{cfg['symbol']}{ads_spend:,.2f} (${ads_spend_usd:,.2f})</td>
                 <td class="num">{roi:.2f}</td>
                 <td class="num">{ctr:.2f}%</td>
@@ -580,14 +554,16 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
                 <td class="num">{acos:.2f}%</td>
             </tr>"""
         else:
+            session_cell = f'<td class="num">{int(sessions):,}</td>' if has_business_data else ''
+            conv_cell = f'<td class="num">{d["conversion_rate"]:.1f}%</td>' if has_business_data else ''
             rows += f"""<tr>
                 <td>{cfg['name']}</td>
-                <td class="num">{int(sessions):,}</td>
+                {session_cell}
                 <td class="num">{cfg['symbol']}{sales:,.2f}</td>
                 <td class="num">${sales_usd:,.2f}</td>
                 <td class="num">{int(orders)}</td>
                 <td class="num">{cfg['symbol']}{aov:,.2f}</td>
-                <td class="num">{d['conversion_rate']:.1f}%</td>
+                {conv_cell}
             </tr>"""
     
     # 全球总计
@@ -603,15 +579,19 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
             global_ctr = total_clicks / total_impressions * 100
         if total_clicks > 0:
             global_cvr = sum(d.get('orders', 0) for d in ads_data.values()) / total_clicks * 100
+        else:
+            global_cvr = 0
         
+        session_cell = f'<td class="num">{int(global_sessions):,}</td>' if has_business_data else ''
+        conv_cell = '<td class="num">-</td>' if has_business_data else ''
         rows += f"""<tr style="font-weight:bold;background:#f0f4ff;">
             <td>全球总计</td>
-            <td class="num">{int(global_sessions):,}</td>
+            {session_cell}
             <td class="num">-</td>
             <td class="num">${global_sales:,.2f}</td>
             <td class="num">{int(global_orders)}</td>
             <td class="num">${global_aov:,.2f}</td>
-            <td class="num">-</td>
+            {conv_cell}
             <td class="num">${global_ads_spend:,.2f}</td>
             <td class="num">{global_roi:.2f}</td>
             <td class="num">{global_ctr:.2f}%</td>
@@ -619,14 +599,16 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
             <td class="num">-</td>
         </tr>"""
     else:
+        session_cell = f'<td class="num">{int(global_sessions):,}</td>' if has_business_data else ''
+        conv_cell = '<td class="num">-</td>' if has_business_data else ''
         rows += f"""<tr style="font-weight:bold;background:#f0f4ff;">
             <td>全球总计</td>
-            <td class="num">{int(global_sessions):,}</td>
+            {session_cell}
             <td class="num">-</td>
             <td class="num">${global_sales:,.2f}</td>
             <td class="num">{int(global_orders)}</td>
             <td class="num">${global_aov:,.2f}</td>
-            <td class="num">-</td>
+            {conv_cell}
         </tr>"""
     
     # SKU详细数据列表
@@ -661,12 +643,16 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
         conv_rate = item.get('conv_rate', 0)
         conv_rate_str = f"{conv_rate:.2f}%" if conv_rate > 0 else "-"
         symbol = country_symbols.get(item['country'], '€')
+        
+        session_cell = f'<td class="num">{item.get("sessions", 0):,}</td>' if has_business_data else ''
+        conv_cell = f'<td class="num">{conv_rate_str}</td>' if has_business_data else ''
+        
         sku_rows += f"""<tr>
             <td><code>{escape(item['sku'])}</code></td>
-            <td class="num">{item.get('sessions', 0):,}</td>
+            {session_cell}
             <td>{item['country']}</td>
             <td class="num">{int(item['quantity'])}</td>
-            <td class="num">{conv_rate_str}</td>
+            {conv_cell}
             <td class="num">{symbol}{item['sales']:,.2f}</td>
             <td class="num" data-usd="{item['sales_usd']:.2f}">${item['sales_usd']:,.2f}</td>
         </tr>"""
@@ -689,6 +675,51 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
     for item in sku_with_comments[:15]:
         comments_rows += f"<tr><td><code>{escape(item['sku'])}</code></td><td>{escape(item['reason'])}</td><td style=\"text-align:left;white-space:pre-wrap;word-break:break-word\">{escape(item['comments'])}</td></tr>"
     
+    # 退货模块HTML（无退货数据时隐藏）
+    if has_returns:
+        returns_html = f"""
+        <div class="grid-2">
+            <div class="card">
+                <div class="card-title">🔄 退货产品</div>
+                <table id="returnsTable">
+                    <thead><tr><th>SKU</th><th class="num">数量</th><th>仓库</th></tr></thead>
+                    <tbody>{returns_rows}</tbody>
+                    <tfoot>
+                        <tr style="font-weight:bold;background:#f0f4ff;">
+                            <td>合计</td>
+                            <td class="num" id="returnsQtySum">0</td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            <div class="card">
+                <div class="card-title">📈 退货原因</div>
+                <table id="reasonTable">
+                    <thead><tr><th>原因</th><th class="num">数量</th><th class="num">占比</th></tr></thead>
+                    <tbody>{reason_rows}</tbody>
+                    <tfoot>
+                        <tr style="font-weight:bold;background:#f0f4ff;">
+                            <td>合计</td>
+                            <td class="num" id="reasonQtySum">0</td>
+                            <td class="num">100%</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-title">💬 客户评论 (有评论的退货)</div>
+            <table>
+                <thead><tr><th style="text-align:left">SKU</th><th style="text-align:left">原因</th><th style="text-align:left">客户评论</th></tr></thead>
+                <tbody>{comments_rows}</tbody>
+            </table>
+        </div>
+        """
+    else:
+        returns_html = ""
+    
     # SKU筛选选项
     country_options = ''.join([f'<option value="{COUNTRY_MAP[c]["name"]}">{COUNTRY_MAP[c]["name"]}</option>' for c in target_countries])
     
@@ -696,11 +727,18 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
     eur_rate = rates['EUR_USD']
     gbp_rate = rates['GBP_USD']
     
-    # HTML
-    if has_ads:
-        core_headers = "<th>国家</th><th>流量</th><th>销售额(本地)</th><th>销售额(USD)</th><th>订单</th><th>客单价</th><th>转化率</th><th>广告费</th><th>ROI</th><th>CTR</th><th>转化</th><th>ACOS</th>"
+    # HTML表头 - 根据数据来源动态生成
+    if has_business_data:
+        session_header = "<th>流量</th>"
+        conv_header = "<th>转化率</th>"
     else:
-        core_headers = "<th>国家</th><th>流量</th><th>销售额(本地)</th><th>销售额(USD)</th><th>订单</th><th>客单价</th><th>转化率</th>"
+        session_header = ""
+        conv_header = ""
+    
+    if has_ads:
+        core_headers = f"<th>国家</th>{session_header}<th>销售额(本地)</th><th>销售额(USD)</th><th>订单</th><th>客单价</th>{conv_header}<th>广告费</th><th>ROI</th><th>CTR</th><th>转化</th><th>ACOS</th>"
+    else:
+        core_headers = f"<th>国家</th>{session_header}<th>销售额(本地)</th><th>销售额(USD)</th><th>订单</th><th>客单价</th>{conv_header}"
     
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -775,17 +813,23 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
             <table id="skuTable">
                 <thead>
                     <tr>
-                        <th data-sort="sku" style="text-align:left">SKU</th><th data-sort="sessions" class="num">流量</th><th data-sort="country">国家</th><th data-sort="qty" class="num">销量</th><th data-sort="conv" class="num">转化率</th><th data-sort="sales" class="num">销售额(本地)</th><th data-sort="sales_usd" class="num">销售额(USD)</th>
+                        <th data-sort="sku" style="text-align:left">SKU</th>
+                        {"<th data-sort=\"sessions\" class=\"num\">流量</th>" if has_business_data else ""}
+                        <th data-sort="country">国家</th>
+                        <th data-sort="qty" class="num">销量</th>
+                        {"<th data-sort=\"conv\" class=\"num\">转化率</th>" if has_business_data else ""}
+                        <th data-sort="sales" class="num">销售额(本地)</th>
+                        <th data-sort="sales_usd" class="num">销售额(USD)</th>
                     </tr>
                 </thead>
                 <tbody>{sku_rows}</tbody>
                 <tfoot>
                     <tr style="font-weight:bold;background:#f0f4ff;">
                         <td>合计</td>
-                        <td class="num" id="skuSessionsSum">0</td>
+                        {"<td class=\"num\" id=\"skuSessionsSum\">0</td>" if has_business_data else ""}
                         <td></td>
                         <td class="num" id="skuQtySum">0</td>
-                        <td class="num" id="skuConvAvg">{avg_conv_rate:.2f}%</td>
+                        {"<td class=\"num\" id=\"skuConvAvg\">{avg_conv_rate:.2f}%</td>" if has_business_data else ""}
                         <td class="num">-</td>
                         <td class="num" id="skuSalesSum">$0.00</td>
                     </tr>
@@ -793,44 +837,7 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
             </table>
         </div>
         
-        <div class="grid-2">
-            <div class="card">
-                <div class="card-title">🔄 退货产品</div>
-                <table id="returnsTable">
-                    <thead><tr><th>SKU</th><th class="num">数量</th><th>仓库</th></tr></thead>
-                    <tbody>{returns_rows}</tbody>
-                    <tfoot>
-                        <tr style="font-weight:bold;background:#f0f4ff;">
-                            <td>合计</td>
-                            <td class="num" id="returnsQtySum">0</td>
-                            <td></td>
-                        </tr>
-                    </tfoot>
-                </table>
-            </div>
-            <div class="card">
-                <div class="card-title">📈 退货原因</div>
-                <table id="reasonTable">
-                    <thead><tr><th>原因</th><th class="num">数量</th><th class="num">占比</th></tr></thead>
-                    <tbody>{reason_rows}</tbody>
-                    <tfoot>
-                        <tr style="font-weight:bold;background:#f0f4ff;">
-                            <td>合计</td>
-                            <td class="num" id="reasonQtySum">0</td>
-                            <td class="num">100%</td>
-                        </tr>
-                    </tfoot>
-                </table>
-            </div>
-        </div>
-        
-        <div class="card">
-            <div class="card-title">💬 客户评论 (有评论的退货)</div>
-            <table>
-                <thead><tr><th style=\"text-align:left\">SKU</th><th style=\"text-align:left\">原因</th><th style=\"text-align:left\">客户评论</th></tr></thead>
-                <tbody>{comments_rows}</tbody>
-            </table>
-        </div>
+        {returns_html}
         
         <footer style="text-align:center;padding:12px;color:#888;font-size:11px;">
             Amazon Report Analyzer
@@ -1033,7 +1040,7 @@ def find_report_dirs(base_dir=None):
                 if any(kw in f for kw in report_keywords):
                     return True
             return False
-        except:
+        except OSError:
             return False
     
     def scan_dirs(base_path, rel_base, priority):
@@ -1045,7 +1052,7 @@ def find_report_dirs(base_dir=None):
                 if is_report_dir(path):
                     rel_path = os.path.relpath(path, rel_base)
                     dirs.append((rel_path, priority))
-        except:
+        except OSError:
             pass
     
     # 1. 扫描当前目录本身（最高优先级）
@@ -1085,7 +1092,7 @@ def find_report_dirs(base_dir=None):
                 mtime = os.path.getmtime(path)
                 if d not in unique_dirs or priority > unique_dirs[d][0]:
                     unique_dirs[d] = (priority, mtime)
-            except:
+            except OSError:
                 pass
     
     dirs_with_time = [(d, v[1], v[0]) for d, v in unique_dirs.items()]
