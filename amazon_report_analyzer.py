@@ -13,11 +13,145 @@ Amazon Sales Report Analyzer - 通用型销售报告分析工具
 import os
 import re
 import csv
+import json
 import argparse
+import logging
 from datetime import datetime
 from collections import defaultdict
 from html import escape
 from typing import Dict, List, Any, Optional
+
+# ==================== 配置加载 ====================
+CONFIG_FILE = "config.json"
+_config = None
+
+
+def load_config() -> Dict[str, Any]:
+    """加载配置文件"""
+    global _config
+    if _config is not None:
+        return _config
+
+    default_config = {
+        "countries": {
+            'DE': {'name': '德国', 'currency': 'EUR', 'symbol': '€'},
+            'IT': {'name': '意大利', 'currency': 'EUR', 'symbol': '€'},
+            'FR': {'name': '法国', 'currency': 'EUR', 'symbol': '€'},
+            'ES': {'name': '西班牙', 'currency': 'EUR', 'symbol': '€'},
+            'UK': {'name': '英国', 'currency': 'GBP', 'symbol': '£'},
+            'US': {'name': '美国', 'currency': 'USD', 'symbol': '$'}
+        },
+        "exchange_rates": {"EUR_USD": 1.08, "GBP_USD": 1.27},
+        "report": {
+            "default_reports_dir": "amazon_reports",
+            "sku_top_n": 50,
+            "returns_top_n": 20,
+            "comments_top_n": 15
+        },
+        "validation": {
+            "required_fields": {
+                "business": ["sku", "quantity", "sales"],
+                "transaction": ["sku", "quantity", "sales"],
+                "returns": ["sku", "reason"],
+                "ads": ["country", "spend", "sales"]
+            },
+            "min_rows": 1,
+            "warn_threshold": 1000
+        }
+    }
+
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), CONFIG_FILE)
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                user_config = json.load(f)
+                # 合并配置
+            _config = {**default_config, **user_config}
+            logging.info(f"已加载配置文件: {config_path}")
+        except Exception as e:
+            logging.warning(f"配置文件加载失败，使用默认配置: {e}")
+            _config = default_config
+    else:
+        logging.info("未找到配置文件，使用默认配置")
+        _config = default_config
+
+    return _config
+
+
+def get_country_map() -> Dict[str, Dict[str, str]]:
+    """获取国家映射配置"""
+    config = load_config()
+    return config.get("countries", {})
+
+
+def get_exchange_rates() -> Dict[str, float]:
+    """获取汇率配置"""
+    config = load_config()
+    return config.get("exchange_rates", {"EUR_USD": 1.08, "GBP_USD": 1.27})
+
+
+def get_report_config() -> Dict[str, Any]:
+    """获取报告配置"""
+    config = load_config()
+    return config.get("report", {})
+
+
+def get_validation_config() -> Dict[str, Any]:
+    """获取数据验证配置"""
+    config = load_config()
+    return config.get("validation", {})
+
+
+# ==================== 日志系统 ====================
+def setup_logging(log_level: str = "INFO", log_file: str = None):
+    """初始化日志系统"""
+    level = getattr(logging, log_level.upper(), logging.INFO)
+
+    # 创建格式化器
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    # 获取根日志记录器
+    logger = logging.getLogger()
+    logger.setLevel(level)
+
+    # 清除已有的处理器
+    logger.handlers.clear()
+
+    # 控制台处理器
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(level)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    # 文件处理器(如果指定)
+    if log_file:
+        try:
+            file_handler = logging.FileHandler(log_file, encoding='utf-8')
+            file_handler.setLevel(level)
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+            logging.info(f"日志已写入文件: {log_file}")
+        except Exception as e:
+            logging.warning(f"无法创建日志文件: {e}")
+
+    return logger
+
+
+# ==================== 配置 ====================
+DEFAULT_REPORTS_DIR = "amazon_reports"
+FALLBACK_RATES = {"EUR_USD": 1.08, "GBP_USD": 1.27}
+
+COUNTRY_MAP = {
+    'DE': {'name': '德国', 'currency': 'EUR', 'symbol': '€'},
+    'IT': {'name': '意大利', 'currency': 'EUR', 'symbol': '€'},
+    'FR': {'name': '法国', 'currency': 'EUR', 'symbol': '€'},
+    'ES': {'name': '西班牙', 'currency': 'EUR', 'symbol': '€'},
+    'UK': {'name': '英国', 'currency': 'GBP', 'symbol': '£'},
+    'US': {'name': '美国', 'currency': 'USD', 'symbol': '$'}
+}
 
 # ==================== 配置 ====================
 DEFAULT_REPORTS_DIR = "amazon_reports"
@@ -51,9 +185,11 @@ def sanitize_filename(name: str) -> str:
 
 # ==================== 汇率获取 ====================
 def fetch_exchange_rates() -> Dict[str, float]:
-    """获取汇率（使用备用汇率）"""
-    print(f"汇率: EUR→USD: {FALLBACK_RATES['EUR_USD']:.4f}, GBP→USD: {FALLBACK_RATES['GBP_USD']:.4f}")
-    return FALLBACK_RATES.copy()
+    """获取汇率（优先使用配置文件）"""
+    rates = get_exchange_rates()
+    logging.info(f"汇率: EUR→USD: {rates['EUR_USD']:.4f}, GBP→USD: {rates['GBP_USD']:.4f}")
+    print(f"汇率: EUR→USD: {rates['EUR_USD']:.4f}, GBP→USD: {rates['GBP_USD']:.4f}")
+    return rates.copy()
 
 # ==================== 工具函数 ====================
 def parse_number(value: Any) -> float:
@@ -84,6 +220,158 @@ def parse_number(value: Any) -> float:
         return float(value) if value else 0.0
     except ValueError:
         return 0.0
+
+
+# ==================== 数据验证 ====================
+class ValidationResult:
+    """验证结果类"""
+    def __init__(self):
+        self.warnings: List[str] = []
+        self.errors: List[str] = []
+        self.info: List[str] = []
+
+    def add_warning(self, msg: str):
+        self.warnings.append(msg)
+        logging.warning(msg)
+
+    def add_error(self, msg: str):
+        self.errors.append(msg)
+        logging.error(msg)
+
+    def add_info(self, msg: str):
+        self.info.append(msg)
+        logging.info(msg)
+
+    @property
+    def is_valid(self) -> bool:
+        return len(self.errors) == 0
+
+    def summary(self) -> str:
+        lines = []
+        if self.info:
+            lines.append(f"信息: {len(self.info)}条")
+        if self.warnings:
+            lines.append(f"警告: {len(self.warnings)}条")
+        if self.errors:
+            lines.append(f"错误: {len(self.errors)}条")
+        return ", ".join(lines) if lines else "验证通过"
+
+
+def validate_csv_file(filepath: str, report_type: str) -> ValidationResult:
+    """验证CSV文件的数据完整性"""
+    result = ValidationResult()
+    validation_config = get_validation_config()
+    required_fields = validation_config.get("required_fields", {}).get(report_type, [])
+    min_rows = validation_config.get("min_rows", 1)
+    warn_threshold = validation_config.get("warn_threshold", 1000)
+
+    try:
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+
+            # 读取表头
+            try:
+                headers = next(reader)
+            except StopIteration:
+                result.add_error(f"文件为空: {os.path.basename(filepath)}")
+                return result
+
+            headers_lower = [h.lower().strip() for h in headers]
+
+            # 检查必需字段
+            missing_fields = []
+            for field in required_fields:
+                found = False
+                for h in headers_lower:
+                    if field in h or h == field:
+                        found = True
+                        break
+                if not found:
+                    missing_fields.append(field)
+
+            if missing_fields:
+                result.add_warning(f"缺少字段 {missing_fields}: {os.path.basename(filepath)}")
+
+            # 统计行数
+            row_count = 0
+            empty_rows = 0
+            for row in reader:
+                row_count += 1
+                if not any(cell.strip() for cell in row):
+                    empty_rows += 1
+
+            # 检查行数
+            if row_count < min_rows:
+                result.add_warning(f"数据行数过少 ({row_count}): {os.path.basename(filepath)}")
+            elif row_count > warn_threshold:
+                result.add_info(f"大数据文件 ({row_count}行): {os.path.basename(filepath)}")
+
+            # 检查空行
+            if empty_rows > 0:
+                result.add_warning(f"包含 {empty_rows} 个空行: {os.path.basename(filepath)}")
+
+            if result.is_valid and not result.warnings:
+                result.add_info(f"验证通过: {os.path.basename(filepath)}")
+
+    except Exception as e:
+        result.add_error(f"读取文件失败: {os.path.basename(filepath)}, 错误: {e}")
+
+    return result
+
+
+def validate_reports_directory(reports_dir: str) -> ValidationResult:
+    """验证整个报告目录的数据完整性"""
+    result = ValidationResult()
+    result.add_info(f"开始验证目录: {reports_dir}")
+
+    if not os.path.exists(reports_dir):
+        result.add_error(f"目录不存在: {reports_dir}")
+        return result
+
+    files = os.listdir(reports_dir)
+    csv_files = [f for f in files if f.endswith('.csv')]
+
+    if not csv_files:
+        result.add_error("目录中没有CSV文件")
+        return result
+
+    result.add_info(f"发现 {len(csv_files)} 个CSV文件")
+
+    # 分类验证
+    validation_summary = {}
+
+    for f in csv_files:
+        filepath = os.path.join(reports_dir, f)
+        f_lower = f.lower()
+
+        # 确定报告类型
+        report_type = "unknown"
+        if 'business' in f_lower or '业务' in f:
+            report_type = "business"
+        elif 'transaction' in f_lower or '交易' in f:
+            report_type = "transaction"
+        elif 'return' in f_lower or '退货' in f:
+            report_type = "returns"
+        elif 'campaign' in f_lower or '广告' in f:
+            report_type = "ads"
+
+        if report_type != "unknown":
+            vr = validate_csv_file(filepath, report_type)
+            if report_type not in validation_summary:
+                validation_summary[report_type] = {"valid": 0, "warnings": 0, "errors": 0}
+
+            if vr.is_valid:
+                validation_summary[report_type]["valid"] += 1
+            validation_summary[report_type]["warnings"] += len(vr.warnings)
+            validation_summary[report_type]["errors"] += len(vr.errors)
+
+    # 输出汇总
+    for rtype, counts in validation_summary.items():
+        result.add_info(f"  {rtype}: {counts['valid']}个通过, {counts['warnings']}个警告, {counts['errors']}个错误")
+
+    result.add_info(f"验证完成: {result.summary()}")
+    return result
+
 
 # ==================== 文件扫描 ====================
 def scan_reports_directory(reports_dir):
@@ -702,7 +990,38 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
             <td class="num">{symbol}{item['sales']:,.2f}</td>
             <td class="num" data-usd="{item['sales_usd']:.2f}">${item['sales_usd']:,.2f}</td>
         </tr>"""
-    
+
+    # 准备图表数据
+    # 1. 各国家销售额数据
+    sales_chart_data = []
+    orders_chart_data = []
+    country_names_list = []
+    for country in target_countries:
+        d = country_data[country]
+        cfg = COUNTRY_MAP[country]
+        sales_usd = d['total_sales'] * rates['EUR_USD'] if cfg['currency'] == 'EUR' else d['total_sales'] * rates['GBP_USD']
+        sales_chart_data.append(f"{{name: '{cfg['name']}', value: {sales_usd:.2f}}}")
+        orders_chart_data.append(f"{{name: '{cfg['name']}', value: {d['orders']}}}")
+        country_names_list.append(f"'{cfg['name']}'")
+
+    sales_chart_data_str = "[" + ", ".join(sales_chart_data) + "]" if sales_chart_data else "[]"
+    orders_chart_data_str = "[" + ", ".join(orders_chart_data) + "]" if orders_chart_data else "[]"
+    country_names_list_str = "[" + ", ".join(country_names_list) + "]" if country_names_list else "[]"
+
+    # 2. Top 10 SKU 销售额
+    top_10_skus = all_skus[:10]
+    sku_chart_data = []
+    for item in top_10_skus:
+        sku_name = item['sku'][:15] + "..." if len(item['sku']) > 15 else item['sku']
+        sku_chart_data.append(f"{{name: '{escape(sku_name)}', value: {item['sales_usd']:.2f}}}")
+    sku_chart_data_str = "[" + ", ".join(sku_chart_data) + "]" if sku_chart_data else "[]"
+
+    # 3. 退货原因数据
+    returns_reason_data = []
+    for reason, count in sorted(reason_dist.items(), key=lambda x: x[1], reverse=True)[:8]:
+        returns_reason_data.append(f"{{name: '{escape(reason)}', value: {count}}}")
+    returns_reason_data_str = "[" + ", ".join(returns_reason_data) + "]" if returns_reason_data else "[]"
+
     # 退货表格 - 按仓库分组
     returns_rows = ""
     for sku, warehouses in sorted(sku_by_warehouse.items(), key=lambda x: sum(x[1].values()), reverse=True)[:20]:
@@ -818,6 +1137,18 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
         .rate-bar input {{ width: 140px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; text-align: right; }}
         .rate-bar button {{ padding: 4px 12px; background: #4CAF50; color: white; border: none; border-radius: 4px; font-size: 12px; cursor: pointer; }}
         .rate-bar button:hover {{ background: #45a049; }}
+        .chart-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }}
+        .chart-card {{ background: white; border-radius: 10px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }}
+        .chart-card h3 {{ font-size: 14px; font-weight: 600; color: #1a1a2e; margin-bottom: 12px; }}
+        .chart {{ width: 100%; height: 280px; }}
+        .summary-cards {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }}
+        .summary-card {{ background: white; border-radius: 10px; padding: 16px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }}
+        .summary-card .label {{ font-size: 12px; color: #666; margin-bottom: 4px; }}
+        .summary-card .value {{ font-size: 20px; font-weight: 600; color: #1a1a2e; }}
+        .summary-card .value.currency {{ color: #4CAF50; }}
+        .summary-card .value.orders {{ color: #2196F3; }}
+        .summary-card .value.returns {{ color: #f44336; }}
+        .summary-card .value.ads {{ color: #FF9800; }}
     </style>
 </head>
 <body>
@@ -832,7 +1163,122 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
             <input type="number" id="rateGbpUsd" value="{gbp_rate:.4f}" step="0.0001">
             <button onclick="recalcRates()">重新计算</button>
         </div>
-        
+
+        <!-- 汇总卡片 -->
+        <div class="summary-cards">
+            <div class="summary-card">
+                <div class="label">总销售额</div>
+                <div class="value currency">${global_sales:,.2f}</div>
+            </div>
+            <div class="summary-card">
+                <div class="label">总订单</div>
+                <div class="value orders">{int(global_orders)}</div>
+            </div>
+            <div class="summary-card">
+                <div class="label">退货数量</div>
+                <div class="value returns">{total_returns}</div>
+            </div>
+            <div class="summary-card">
+                <div class="label">广告花费</div>
+                <div class="value ads">${global_ads_spend:,.2f}</div>
+            </div>
+        </div>
+
+        <!-- 图表区域 -->
+        <div class="chart-grid">
+            <div class="chart-card">
+                <h3>📊 各国家销售额分布</h3>
+                <div id="salesChart" class="chart"></div>
+            </div>
+            <div class="chart-card">
+                <h3>🏆 Top 10 SKU 销售额</h3>
+                <div id="skuChart" class="chart"></div>
+            </div>
+        </div>
+        <div class="chart-grid">
+            <div class="chart-card">
+                <h3>📈 退货原因分布</h3>
+                <div id="returnsReasonChart" class="chart"></div>
+            </div>
+            <div class="chart-card">
+                <h3>🗺️ 各国家订单分布</h3>
+                <div id="ordersChart" class="chart"></div>
+            </div>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+        <script>
+        // 图表数据
+        const salesData = {sales_chart_data_str};
+        const skuData = {sku_chart_data_str};
+        const returnsReasonData = {returns_reason_data_str};
+        const ordersData = {orders_chart_data_str};
+        const countryNames = {country_names_list_str};
+
+        // 初始化图表
+        document.addEventListener('DOMContentLoaded', function() {{
+            // 销售额饼图
+            if (salesData.length > 0) {{
+                const salesChart = echarts.init(document.getElementById('salesChart'));
+                salesChart.setOption({{
+                    tooltip: {{ trigger: 'item', formatter: function(params) {{ return params.name + ': $' + params.value.toFixed(2) + ' (' + params.percent + '%)'; }} }},
+                    series: [{{
+                        type: 'pie',
+                        radius: ['40%', '70%'],
+                        avoidLabelOverlap: false,
+                        itemStyle: {{ borderRadius: 10, borderColor: '#fff', borderWidth: 2 }},
+                        label: {{ show: true, formatter: '{{b}}' }},
+                        data: salesData
+                    }}]
+                }});
+            }}
+
+            // SKU柱状图
+            if (skuData.length > 0) {{
+                const skuChart = echarts.init(document.getElementById('skuChart'));
+                skuChart.setOption({{
+                    tooltip: {{ trigger: 'axis', axisPointer: {{ type: 'shadow' }} }},
+                    grid: {{ left: '3%', right: '4%', bottom: '3%', containLabel: true }},
+                    xAxis: {{ type: 'value', axisLabel: {{ formatter: '${{value}}' }} }},
+                    yAxis: {{ type: 'category', data: skuData.map(i => i.name), inverse: true }},
+                    series: [{{
+                        type: 'bar',
+                        data: skuData.map(i => i.value),
+                        itemStyle: {{ color: '#4CAF50' }}
+                    }}]
+                }});
+            }}
+
+            // 退货原因饼图
+            if (returnsReasonData.length > 0) {{
+                const returnsChart = echarts.init(document.getElementById('returnsReasonChart'));
+                returnsChart.setOption({{
+                    tooltip: {{ trigger: 'item' }},
+                    series: [{{
+                        type: 'pie',
+                        radius: '70%',
+                        data: returnsReasonData,
+                        itemStyle: {{ borderRadius: 5, borderColor: '#fff', borderWidth: 1 }}
+                    }}]
+                }});
+            }}
+
+            // 订单分布饼图
+            if (ordersData.length > 0) {{
+                const ordersChart = echarts.init(document.getElementById('ordersChart'));
+                ordersChart.setOption({{
+                    tooltip: {{ trigger: 'item' }},
+                    series: [{{
+                        type: 'pie',
+                        radius: ['40%', '70%'],
+                        data: ordersData,
+                        itemStyle: {{ borderRadius: 10, borderColor: '#fff', borderWidth: 2 }}
+                    }}]
+                }});
+            }}
+        }});
+        </script>
+
         <div class="card">
             <div class="card-title">💰 核心数据 ({', '.join([COUNTRY_MAP[c]['name'] for c in target_countries])})</div>
             <table>

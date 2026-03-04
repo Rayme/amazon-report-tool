@@ -1,0 +1,54 @@
+{
+  "countries": {
+    "DE": {
+      "name": "德国",
+      "currency": "EUR",
+      "symbol": "€"
+    },
+    "IT": {
+      "name": "意大利",
+      "currency": "EUR",
+      "symbol": "€"
+    },
+    "FR": {
+      "name": "法国",
+      "currency": "EUR",
+      "symbol": "€"
+    },
+    "ES": {
+      "name": "西班牙",
+      "currency": "EUR",
+      "symbol": "€"
+    },
+    "UK": {
+      "name": "英国",
+      "currency": "GBP",
+      "symbol": "£"
+    },
+    "US": {
+      "name": "美国",
+      "currency": "USD",
+      "symbol": "$"
+    }
+  },
+  "exchange_rates": {
+    "EUR_USD": 1.08,
+    "GBP_USD": 1.27
+  },
+  "report": {
+    "default_reports_dir": "amazon_reports",
+    "sku_top_n": 50,
+    "returns_top_n": 20,
+    "comments_top_n": 15
+  },
+  "validation": {
+    "required_fields": {
+      "business": ["sku", "quantity", "sales"],
+      "transaction": ["sku", "quantity", "sales"],
+      "returns": ["sku", "reason"],
+      "ads": ["country", "spend", "sales"]
+    },
+    "min_rows": 1,
+    "warn_threshold": 1000
+  }
+}
