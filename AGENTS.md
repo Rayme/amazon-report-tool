@@ -172,6 +172,74 @@ COUNTRY_MAP = {
 
 Find the HTML generation section (search for `generate_country_report` or HTML string literals) and modify the template structure. Always escape user data with `escape()` function.
 
+## Code Audit Requirements (MANDATORY)
+
+All code changes MUST follow these hard requirements. Every commit and code modification must pass these checks:
+
+### Security Requirements
+
+- **NEVER disable SSL certificate verification** (`ssl.CERT_NONE`, `check_hostname = False`)
+- **NEVER use urllib with disabled SSL verification**
+- **Avoid web scraping for sensitive data** - use official APIs when available
+- **Validate file paths** to prevent directory traversal attacks
+
+### Robustness Requirements
+
+- **ALWAYS check for division by zero** before dividing:
+  ```python
+  # BAD
+  result = sales / orders
+  
+  # GOOD
+  result = sales / orders if orders > 0 else 0
+  ```
+
+- **ALWAYS check array/list bounds** before accessing elements:
+  ```python
+  # BAD
+  value = row[index]
+  
+  # GOOD  
+  value = row[index] if len(row) > index else default_value
+  ```
+
+- **Use specific exception types** - NEVER use bare `except:`:
+  ```python
+  # BAD
+  except:
+      pass
+  
+  # GOOD
+  except OSError:
+      pass
+  except ValueError as e:
+      logger.warning(f"Parse error: {e}")
+  ```
+
+### Data Validation Requirements
+
+- **Validate all numeric inputs** - use `parse_number()` with proper error handling
+- **Handle empty/missing data** - return safe defaults (0, "", [], {})
+- **Escape HTML content** - always use `escape()` for user-provided data in HTML
+
+### Before Each Commit, Verify:
+
+1. Run syntax check: `python -m py_compile amazon_report_analyzer.py`
+2. Run functional test: `python amazon_report_analyzer.py --dir amazon`
+3. Verify no SSL verification is disabled
+4. Verify no bare `except:` statements
+5. Verify all divisions have zero-checks
+
+### Code Review Checklist
+
+- [ ] No `ssl.CERT_NONE` or `check_hostname = False`
+- [ ] No bare `except:` statements
+- [ ] All divisions have zero checks (`if x > 0`)
+- [ ] All list/dict accesses have bounds checks
+- [ ] All numeric parsing handles errors gracefully
+- [ ] HTML content is escaped with `escape()`
+- [ ] Tests pass with sample data
+
 ## Notes for AI Agents
 
 - This is a personal utility project, not a large-scale application
