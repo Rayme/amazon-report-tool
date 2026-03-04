@@ -32,6 +32,23 @@ COUNTRY_MAP = {
     'US': {'name': '美国', 'currency': 'USD', 'symbol': '$'}
 }
 
+# ==================== 工具函数 ====================
+def sanitize_filename(name: str) -> str:
+    """生成安全的文件名，移除不允许的字符"""
+    if not name:
+        return "report"
+    # 移除或替换不允许在文件名中使用的字符
+    import re
+    # 替换空格和常见分隔符
+    name = re.sub(r'[\s\-/:\\]', '_', name)
+    # 移除非ASCII字符（保留中文但移除特殊符号）
+    name = re.sub(r'[<>:"/\\|?*]', '', name)
+    # 移除连续的下划线
+    while '__' in name:
+        name = name.replace('__', '_')
+    return name.strip('_')
+
+
 # ==================== 汇率获取 ====================
 def fetch_exchange_rates() -> Dict[str, float]:
     """获取汇率（使用备用汇率）"""
@@ -175,13 +192,20 @@ def load_transaction_report(reports_dir, country):
     
     with open(filepath, 'r', encoding='utf-8-sig') as f:
         reader = csv.reader(f)
-        
-        headers = next(reader)
+
+        try:
+            headers = next(reader)
+        except StopIteration:
+            return [], {}
+
         # 跳过注释行（德语报告有多行描述）
-        while headers and len(headers) == 1 and not headers[0].strip().startswith('"'):
-            headers = next(reader)
-        while headers and not any('sku' in h.lower() or 'typ' in h.lower() or 'type' in h.lower() for h in headers if h):
-            headers = next(reader)
+        try:
+            while headers and len(headers) == 1 and not headers[0].strip().startswith('"'):
+                headers = next(reader)
+            while headers and not any('sku' in h.lower() or 'typ' in h.lower() or 'type' in h.lower() for h in headers if h):
+                headers = next(reader)
+        except StopIteration:
+            return [], {}
         
         indices = {}
         for i, h in enumerate(headers):
@@ -263,8 +287,11 @@ def load_business_report(reports_dir, country):
     
     with open(filepath, 'r', encoding='utf-8-sig') as f:
         reader = csv.reader(f)
-        headers = next(reader)
-        
+        try:
+            headers = next(reader)
+        except StopIteration:
+            return load_transaction_report(reports_dir, country)
+
         indices = {}
         for i, h in enumerate(headers):
             h_lower = h.lower()
@@ -285,7 +312,7 @@ def load_business_report(reports_dir, country):
             elif ('商品会话百分比' in h or '转化率' in h or 'conversion' in h_lower) and 'conv_rate' not in indices:
                 if 'b2b' not in h_lower:
                     indices['conv_rate'] = i
-        
+
         for row in reader:
             if len(row) <= max(indices.get('sku', 0), indices.get('qty', 0), indices.get('sales', 0)):
                 continue
@@ -335,8 +362,11 @@ def load_returns_report(reports_dir):
     
     with open(filepath, 'r', encoding='utf-8-sig') as f:
         reader = csv.reader(f)
-        headers = next(reader)
-        
+        try:
+            headers = next(reader)
+        except StopIteration:
+            return [], {}, {}, []
+
         indices = {}
         for i, h in enumerate(headers):
             h_lower = h.lower().replace('"', '')
@@ -390,8 +420,11 @@ def load_ads_report(reports_dir):
     
     with open(filepath, 'r', encoding='utf-8-sig') as f:
         reader = csv.reader(f)
-        headers = next(reader)
-        
+        try:
+            headers = next(reader)
+        except StopIteration:
+            return {}, {}
+
         indices = {}
         for i, h in enumerate(headers):
             h_cn = h.strip().replace('﻿', '')
@@ -444,6 +477,9 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
     # 确定周期
     if not period:
         period = scan['period']
+
+    # 转义period防止XSS
+    period_escaped = escape(period) if period else 'Unknown'
     
     # 确定要分析的国家
     if countries:
@@ -495,7 +531,12 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
     
     top_returns = []
     for sku, data in sku_returns.items():
-        main_reason = max(data['reasons'].items(), key=lambda x: x[1])[0] if data['reasons'] else ''
+        main_reason = ''
+        if data['reasons']:
+            try:
+                main_reason = max(data['reasons'].items(), key=lambda x: x[1])[0]
+            except (ValueError, KeyError):
+                main_reason = ''
         top_returns.append({'sku': sku, 'count': data['count'], 'main_reason': main_reason})
     top_returns = sorted(top_returns, key=lambda x: x['count'], reverse=True)[:10]
     
@@ -750,7 +791,7 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>亚马逊销售报告 - {period}</title>
+    <title>亚马逊销售报告 - {period_escaped}</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; padding: 16px; }}
@@ -781,7 +822,7 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
 </head>
 <body>
     <div class="container">
-        <h1>📊 亚马逊销售报告 - {period}</h1>
+        <h1>📊 亚马逊销售报告 - {period_escaped}</h1>
         <p class="subtitle">生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
         
         <div class="rate-bar">
@@ -1001,13 +1042,11 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
 </html>"""
     
     if not output_file:
-        if '全年' in period:
-            output_file = f"amazon_report_{period}.html"
-        else:
-            p = period.replace('年', '_').replace('月', '')
-            while '__' in p:
-                p = p.replace('__', '_')
-            output_file = f"amazon_report_{p.strip('_')}.html"
+        # 使用安全的文件名
+        safe_period = sanitize_filename(period)
+        if not safe_period:
+            safe_period = "report"
+        output_file = f"amazon_report_{safe_period}.html"
     
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(html)
@@ -1110,16 +1149,66 @@ def find_report_dirs(base_dir=None):
     
     return result
 
+def validate_report_dir(dir_path):
+    """验证并规范化报告目录路径，防止目录遍历攻击"""
+    if not dir_path:
+        return None
+
+    # 获取脚本所在目录作为基准目录
+    script_dir = os.path.realpath(os.path.dirname(os.path.abspath(__file__)))
+    current_dir = os.path.realpath(os.getcwd())
+
+    # 解析目标路径
+    if os.path.isabs(dir_path):
+        target_dir = os.path.realpath(dir_path)
+    else:
+        target_dir = os.path.realpath(os.path.join(current_dir, dir_path))
+
+    # 检查路径是否包含 ..
+    if '..' in dir_path:
+        print(f"警告: 路径不允许包含 '..' : {dir_path}")
+        return None
+
+    # 限制在当前目录及脚本目录的父目录范围内
+    allowed_roots = [
+        os.path.realpath(current_dir),
+        os.path.realpath(script_dir),
+        os.path.realpath(os.path.join(script_dir, '..')),
+        os.path.realpath(os.path.join(current_dir, '..')),
+    ]
+
+    # 检查目标路径是否在允许范围内
+    is_allowed = any(target_dir.startswith(root) for root in allowed_roots)
+
+    if not is_allowed:
+        print(f"警告: 路径超出允许范围 : {dir_path}")
+        return None
+
+    # 检查目录是否存在
+    if not os.path.isdir(target_dir):
+        print(f"警告: 目录不存在 : {dir_path}")
+        return None
+
+    return target_dir
+
+
 def main():
     # 自动检测报告目录
     report_dirs = find_report_dirs()
-    
+
     parser = argparse.ArgumentParser(description='Amazon Sales Report Analyzer')
     parser.add_argument('--dir', '-d', help='报告目录 (不指定则自动检测)')
     parser.add_argument('--countries', '-c', nargs='+', help='指定国家代码 (DE IT FR ES UK)')
     parser.add_argument('--output', '-o', help='输出文件名')
     parser.add_argument('--period', '-p', help='报告周期名称，如 "2026年2月"')
     args = parser.parse_args()
+
+    # 验证并规范化目录参数
+    if args.dir:
+        validated_dir = validate_report_dir(args.dir)
+        if validated_dir is None:
+            print("错误: 无效的目录参数，将使用自动检测")
+            args.dir = None
     
     print("=" * 50)
     print("Amazon Sales Report Analyzer")
