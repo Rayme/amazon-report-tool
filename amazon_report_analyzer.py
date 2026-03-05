@@ -140,20 +140,7 @@ def setup_logging(log_level: str = "INFO", log_file: str = None):
     return logger
 
 
-# ==================== 配置 ====================
-DEFAULT_REPORTS_DIR = "amazon_reports"
-FALLBACK_RATES = {"EUR_USD": 1.08, "GBP_USD": 1.27}
 
-COUNTRY_MAP = {
-    'DE': {'name': '德国', 'currency': 'EUR', 'symbol': '€'},
-    'IT': {'name': '意大利', 'currency': 'EUR', 'symbol': '€'},
-    'FR': {'name': '法国', 'currency': 'EUR', 'symbol': '€'},
-    'ES': {'name': '西班牙', 'currency': 'EUR', 'symbol': '€'},
-    'UK': {'name': '英国', 'currency': 'GBP', 'symbol': '£'},
-    'US': {'name': '美国', 'currency': 'USD', 'symbol': '$'}
-}
-
-# ==================== 配置 ====================
 DEFAULT_REPORTS_DIR = "amazon_reports"
 FALLBACK_RATES = {"EUR_USD": 1.08, "GBP_USD": 1.27}
 
@@ -559,8 +546,6 @@ def load_business_report(reports_dir, country):
     files = [f for f in all_files if 'BusinessReport' in f and f.startswith(country)]
     if not files:
         files = [f for f in all_files if 'BusinessReport' in f and country in f]
-    if not files:
-        files = [f for f in all_files if 'BusinessReport' in f]
     
     if not files:
         return load_transaction_report(reports_dir, country)
@@ -957,6 +942,7 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
                     'sku': p['sku'],
                     'title': p['title'],
                     'country': cfg['name'],
+                    'currency': cfg['currency'],
                     'quantity': p['quantity'],
                     'sales': p['sales'],
                     'sales_usd': sales_usd,
@@ -980,8 +966,9 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
         
         session_cell = f'<td class="num">{item.get("sessions", 0):,}</td>' if has_business_data else ''
         conv_cell = f'<td class="num">{conv_rate_str}</td>' if has_business_data else ''
+        has_sessions_attr = 'true' if has_business_data else 'false'
         
-        sku_rows += f"""<tr>
+        sku_rows += f"""<tr data-currency="{item['currency']}" data-has-sessions="{has_sessions_attr}">
             <td><code>{escape(item['sku'])}</code></td>
             {session_cell}
             <td>{item['country']}</td>
@@ -1305,7 +1292,7 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
             <table id="skuTable">
                 <thead>
                     <tr>
-                        <th data-sort="sku" style="text-align:left">SKU</th>
+                        <th data-sort="sku" style="text-align:left;min-width:180px">SKU</th>
                         {"<th data-sort=\"sessions\" class=\"num\">流量</th>" if has_business_data else ""}
                         <th data-sort="country">国家</th>
                         <th data-sort="qty" class="num">销量</th>
@@ -1353,7 +1340,9 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
             
             let filtered = rows.filter(row => {{
                 const cells = row.querySelectorAll('td');
-                const rowCountry = cells[2].textContent.toLowerCase();
+                const hasSessions = row.dataset.hasSessions === 'true';
+                const idxCountry = hasSessions ? 2 : 1;
+                const rowCountry = cells[idxCountry].textContent.toLowerCase();
                 const rowSku = cells[0].textContent.toLowerCase();
                 return (country === '' || rowCountry.includes(country)) &&
                        (sku === '' || rowSku.includes(sku));
@@ -1362,14 +1351,27 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
             filtered.sort((a, b) => {{
                 const cellsA = a.querySelectorAll('td');
                 const cellsB = b.querySelectorAll('td');
+                const hasSessions = a.dataset.hasSessions === 'true';
+                const idxSessions = hasSessions ? 1 : -1;
+                const idxCountry = hasSessions ? 2 : 1;
+                const idxQty = hasSessions ? 3 : 2;
+                const idxConv = hasSessions ? 4 : -1;
+                const idxSalesLocal = hasSessions ? 5 : 3;
+                const idxSalesUsd = hasSessions ? 6 : 4;
                 let valA, valB;
                 if (sortCol === 'sku') {{ valA = cellsA[0].textContent; valB = cellsB[0].textContent; }}
-                else if (sortCol === 'sessions') {{ valA = parseInt(cellsA[1].textContent.replace(/,/g, '')) || 0; valB = parseInt(cellsB[1].textContent.replace(/,/g, '')) || 0; }}
-                else if (sortCol === 'country') {{ valA = cellsA[2].textContent; valB = cellsB[2].textContent; }}
-                else if (sortCol === 'qty') {{ valA = parseInt(cellsA[3].textContent) || 0; valB = parseInt(cellsB[3].textContent) || 0; }}
-                else if (sortCol === 'conv') {{ valA = parseFloat(cellsA[4].textContent.replace('%', '')) || 0; valB = parseFloat(cellsB[4].textContent.replace('%', '')) || 0; }}
-                else if (sortCol === 'sales_usd') {{ valA = parseFloat(cellsA[6].getAttribute('data-usd')) || parseFloat(cellsA[6].textContent.replace(/[$,€£]/g, '')) || 0; valB = parseFloat(cellsB[6].getAttribute('data-usd')) || parseFloat(cellsB[6].textContent.replace(/[$,€£]/g, '')) || 0; }}
-                else {{ valA = parseFloat(cellsA[5].textContent.replace(/[$,€£]/g, '')) || 0; valB = parseFloat(cellsB[5].textContent.replace(/[$,€£]/g, '')) || 0; }}
+                else if (sortCol === 'sessions') {{ 
+                    if (idxSessions < 0) {{ valA = 0; valB = 0; }}
+                    else {{ valA = parseInt(cellsA[idxSessions].textContent.replace(/,/g, '')) || 0; valB = parseInt(cellsB[idxSessions].textContent.replace(/,/g, '')) || 0; }}
+                }}
+                else if (sortCol === 'country') {{ valA = cellsA[idxCountry].textContent; valB = cellsB[idxCountry].textContent; }}
+                else if (sortCol === 'qty') {{ valA = parseInt(cellsA[idxQty].textContent) || 0; valB = parseInt(cellsB[idxQty].textContent) || 0; }}
+                else if (sortCol === 'conv') {{ 
+                    if (idxConv < 0) {{ valA = 0; valB = 0; }}
+                    else {{ valA = parseFloat(cellsA[idxConv].textContent.replace('%', '')) || 0; valB = parseFloat(cellsB[idxConv].textContent.replace('%', '')) || 0; }}
+                }}
+                else if (sortCol === 'sales_usd') {{ valA = parseFloat(cellsA[idxSalesUsd].getAttribute('data-usd')) || parseFloat(cellsA[idxSalesUsd].textContent.replace(/[$,€£]/g, '')) || 0; valB = parseFloat(cellsB[idxSalesUsd].getAttribute('data-usd')) || parseFloat(cellsB[idxSalesUsd].textContent.replace(/[$,€£]/g, '')) || 0; }}
+                else {{ valA = parseFloat(cellsA[idxSalesLocal].textContent.replace(/[$,€£]/g, '')) || 0; valB = parseFloat(cellsB[idxSalesLocal].textContent.replace(/[$,€£]/g, '')) || 0; }}
                 return sortAsc ? (valA > valB ? 1 : -1) : (valA < valB ? 1 : -1);
             }});
             
@@ -1380,10 +1382,15 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
             let totalSessions = 0, totalQty = 0, totalSales = 0, weightedConv = 0;
             filtered.forEach(row => {{
                 const cells = row.querySelectorAll('td');
-                const sessions = parseInt(cells[1].textContent.replace(/,/g, '')) || 0;
-                const qty = parseInt(cells[3].textContent) || 0;
-                const conv = parseFloat(cells[4].textContent.replace('%', '')) || 0;
-                const sales = parseFloat(cells[6].getAttribute('data-usd')) || parseFloat(cells[6].textContent.replace(/[$,]/g, '')) || 0;
+                const hasSessions = row.dataset.hasSessions === 'true';
+                const idxSessions = hasSessions ? 1 : -1;
+                const idxQty = hasSessions ? 3 : 2;
+                const idxConv = hasSessions ? 4 : -1;
+                const idxSalesUsd = hasSessions ? 6 : 4;
+                const sessions = idxSessions >= 0 ? parseInt(cells[idxSessions].textContent.replace(/,/g, '')) || 0 : 0;
+                const qty = parseInt(cells[idxQty].textContent) || 0;
+                const conv = idxConv >= 0 ? parseFloat(cells[idxConv].textContent.replace('%', '')) || 0 : 0;
+                const sales = parseFloat(cells[idxSalesUsd].getAttribute('data-usd')) || parseFloat(cells[idxSalesUsd].textContent.replace(/[$,]/g, '')) || 0;
                 totalSessions += sessions;
                 totalQty += qty;
                 totalSales += sales;
@@ -1419,18 +1426,20 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
         
         document.querySelectorAll('#skuTable tbody tr').forEach(row => {{
             const cells = row.querySelectorAll('td');
-            const countryText = cells[3].textContent;
-            const isEur = countryText.includes('德国') || countryText.includes('意大利') || countryText.includes('法国') || countryText.includes('西班牙');
+            const hasSessions = row.dataset.hasSessions === 'true';
+            const idxSalesUsd = hasSessions ? 6 : 4;
+            const currency = row.dataset.currency;
+            const isEur = currency === 'EUR';
             const rate = isEur ? rateEur : rateGbp;
             const defaultRate = isEur ? DEFAULT_EUR_RATE : DEFAULT_GBP_RATE;
-            
-            let origUsd = parseFloat(cells[6].getAttribute('data-usd'));
+
+            let origUsd = parseFloat(cells[idxSalesUsd].getAttribute('data-usd'));
             if (isNaN(origUsd) || origUsd === 0) {{
-                origUsd = parseFloat(cells[6].textContent.replace(/[$,]/g, '')) || 0;
-                cells[6].setAttribute('data-usd', origUsd);
+                origUsd = parseFloat(cells[idxSalesUsd].textContent.replace(/[$,]/g, '')) || 0;
+                cells[idxSalesUsd].setAttribute('data-usd', origUsd);
             }}
             const newUsd = origUsd * rate / defaultRate;
-            cells[6].textContent = '$' + newUsd.toFixed(2).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
+            cells[idxSalesUsd].textContent = '$' + newUsd.toFixed(2).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
         }});
         
         document.querySelectorAll('.card table tbody tr').forEach(row => {{
@@ -1574,14 +1583,18 @@ def find_report_dirs(base_dir=None):
             dirs.append(('amazon', 10))
     
     # 去重，按优先级和时间排序
+    # 名字叫 "amazon" 的目录额外增加优先级
     unique_dirs = {}
     for d, priority in dirs:
         path = os.path.join(current_dir, d) if d != '.' else current_dir
         if os.path.exists(path):
             try:
                 mtime = os.path.getmtime(path)
-                if d not in unique_dirs or priority > unique_dirs[d][0]:
-                    unique_dirs[d] = (priority, mtime)
+                # 名字精确匹配 "amazon" 的目录额外 +100 优先级
+                name_priority = 100 if d == 'amazon' else 0
+                total_priority = priority + name_priority
+                if d not in unique_dirs or total_priority > unique_dirs[d][0]:
+                    unique_dirs[d] = (total_priority, mtime)
             except OSError:
                 pass
     
