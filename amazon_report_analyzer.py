@@ -969,7 +969,7 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
         has_sessions_attr = 'true' if has_business_data else 'false'
         
         sku_rows += f"""<tr data-currency="{item['currency']}" data-has-sessions="{has_sessions_attr}">
-            <td><code>{escape(item['sku'])}</code></td>
+            <td style="min-width:180px"><code>{escape(item['sku'])}</code></td>
             {session_cell}
             <td>{item['country']}</td>
             <td class="num">{int(item['quantity'])}</td>
@@ -999,7 +999,7 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
     top_10_skus = all_skus[:10]
     sku_chart_data = []
     for item in top_10_skus:
-        sku_name = item['sku'][:15] + "..." if len(item['sku']) > 15 else item['sku']
+        sku_name = item['sku']  # 显示完整SKU名称
         sku_chart_data.append(f"{{name: '{escape(sku_name)}', value: {item['sales_usd']:.2f}}}")
     sku_chart_data_str = "[" + ", ".join(sku_chart_data) + "]" if sku_chart_data else "[]"
 
@@ -1225,7 +1225,7 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
                 const skuChart = echarts.init(document.getElementById('skuChart'));
                 skuChart.setOption({{
                     tooltip: {{ trigger: 'axis', axisPointer: {{ type: 'shadow' }} }},
-                    grid: {{ left: '3%', right: '4%', bottom: '3%', containLabel: true }},
+                    grid: {{ left: '12%', right: '4%', bottom: '3%', containLabel: true }},
                     xAxis: {{ type: 'value', axisLabel: {{ formatter: '${{value}}' }} }},
                     yAxis: {{ type: 'category', data: skuData.map(i => i.name), inverse: true }},
                     series: [{{
