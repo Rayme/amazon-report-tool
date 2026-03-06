@@ -1,0 +1,5 @@
+# Amazon Report Analyzer 打包依赖
+# 使用 pip install -r requirements-build.txt 安装
+
+pyinstaller>=6.0
+openpyxl>=3.0

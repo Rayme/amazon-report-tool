@@ -739,8 +739,254 @@ def load_ads_report(reports_dir):
     
     return dict(ads_by_country), {}
 
+
+
+# ==================== 数据导出 ====================
+def export_to_csv(data, filepath):
+    """导出数据到CSV文件"""
+    import csv
+    with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+        writer = csv.writer(f)
+        writer.writerow(['=== 国家汇总 ==='])
+        writer.writerow(['国家', '销售额(本地)', '销售额(USD)', '订单数', '客单价', '转化率', '广告花费', 'ROI', 'CTR', 'CVR', 'ACOS', '退货数'])
+        for row in data.get('country_summary', []):
+            writer.writerow(row)
+        writer.writerow([])
+        writer.writerow(['=== SKU明细 ==='])
+        writer.writerow(['SKU', '国家', '数量', '销售额', '转化率', '会话数'])
+        for row in data.get('sku_details', []):
+            writer.writerow(row)
+        writer.writerow([])
+        writer.writerow(['=== 退货明细 ==='])
+        writer.writerow(['SKU', '原因', '仓库', '数量'])
+        for row in data.get('returns_details', []):
+            writer.writerow(row)
+        writer.writerow([])
+        writer.writerow(['=== 广告明细 ==='])
+        writer.writerow(['国家', '花费', '点击', '展示', '销售', '订单', 'CTR', 'CVR', 'ACOS'])
+        for row in data.get('ads_details', []):
+            writer.writerow(row)
+    print(f"CSV导出完成: {filepath}")
+
+
+def export_to_excel(data, filepath, rates=None):
+    """导出数据到Excel文件（数值使用数字格式，USD销售额使用公式）"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, numbers
+
+    FORMAT_DECIMAL2 = '0.00'
+    FORMAT_DECIMAL0 = '0'
+    FORMAT_PERCENT = '0.00%'
+    FORMAT_RAW = numbers.FORMAT_NUMBER
+
+    if rates is None:
+        rates = {'EUR_USD': 1.08, 'GBP_USD': 1.27}
+
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    # Sheet 1: 国家汇总
+    ws1 = wb.create_sheet("国家汇总")
+
+    # 汇率设置区域
+    ws1.merge_cells('A1:D1')
+    ws1.cell(1, 1, "汇率设置").font = Font(bold=True, size=12)
+    ws1.cell(1, 1).fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+
+    ws1.cell(2, 1, "EUR→USD 汇率:")
+    ws1.cell(2, 2, rates.get('EUR_USD', 1.08))
+    ws1.cell(2, 2).number_format = '0.0000'
+
+    ws1.cell(3, 1, "GBP→USD 汇率:")
+    ws1.cell(3, 2, rates.get('GBP_USD', 1.27))
+    ws1.cell(3, 2).number_format = '0.0000'
+
+    # 表头
+    headers1 = ['国家', '销售额(本地)', '销售额(USD)', '订单数', '客单价', '转化率', '广告花费', 'ROI', 'CTR', 'CVR', 'ACOS', '退货数']
+    col_formats1 = [FORMAT_RAW, FORMAT_DECIMAL2, FORMAT_DECIMAL2, FORMAT_DECIMAL0,
+                    FORMAT_DECIMAL2, FORMAT_PERCENT, FORMAT_DECIMAL2, FORMAT_DECIMAL2,
+                    FORMAT_PERCENT, FORMAT_PERCENT, FORMAT_PERCENT, FORMAT_DECIMAL0]
+
+    for col, header in enumerate(headers1, 1):
+        cell = ws1.cell(5, col, header)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+
+    # 数据
+    for row_idx, row in enumerate(data.get('country_summary', []), 6):
+        country_name = row[0]
+        for col_idx, value in enumerate(row, 1):
+            cell = ws1.cell(row_idx, col_idx, value)
+            if col_idx == 3:  # USD销售额使用公式
+                if '德国' in country_name or '西班牙' in country_name or '法国' in country_name or '意大利' in country_name:
+                    cell.value = f'=B{row_idx}*$B$2'
+                elif '英国' in country_name:
+                    cell.value = f'=B{row_idx}*$B$3'
+                else:
+                    cell.value = f'=B{row_idx}'
+                cell.number_format = FORMAT_DECIMAL2
+            elif col_idx > 1 and col_formats1[col_idx - 1]:
+                cell.number_format = col_formats1[col_idx - 1]
+
+    # 列宽
+    ws1.column_dimensions['A'].width = 12
+    ws1.column_dimensions['B'].width = 15
+    ws1.column_dimensions['C'].width = 15
+    for col in ['D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L']:
+        ws1.column_dimensions[col].width = 10
+
+    # Sheet 2: SKU明细
+    ws2 = wb.create_sheet("SKU明细")
+    headers2 = ['SKU', '国家', '数量', '销售额', '转化率', '会话数']
+    col_formats2 = [FORMAT_RAW, FORMAT_RAW, FORMAT_DECIMAL0, FORMAT_DECIMAL2, FORMAT_PERCENT, FORMAT_DECIMAL0]
+
+    for col, header in enumerate(headers2, 1):
+        cell = ws2.cell(1, col, header)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    for row_idx, row in enumerate(data.get('sku_details', []), 2):
+        for col_idx, value in enumerate(row, 1):
+            cell = ws2.cell(row_idx, col_idx, value)
+            if col_idx >= 3 and col_formats2[col_idx - 1]:
+                cell.number_format = col_formats2[col_idx - 1]
+
+    # Sheet 3: 退货明细
+    ws3 = wb.create_sheet("退货明细")
+    headers3 = ['SKU', '原因', '仓库', '数量']
+
+    for col, header in enumerate(headers3, 1):
+        cell = ws3.cell(1, col, header)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    for row_idx, row in enumerate(data.get('returns_details', []), 2):
+        for col_idx, value in enumerate(row, 1):
+            cell = ws3.cell(row_idx, col_idx, value)
+            if col_idx == 4:
+                cell.number_format = FORMAT_DECIMAL0
+
+    # Sheet 4: 广告明细
+    ws4 = wb.create_sheet("广告明细")
+    headers4 = ['国家', '花费', '点击', '展示', '销售', '订单', 'CTR', 'CVR', 'ACOS']
+    col_formats4 = [FORMAT_RAW, FORMAT_DECIMAL2, FORMAT_DECIMAL0, FORMAT_DECIMAL0,
+                    FORMAT_DECIMAL2, FORMAT_DECIMAL0, FORMAT_PERCENT, FORMAT_PERCENT, FORMAT_PERCENT]
+
+    for col, header in enumerate(headers4, 1):
+        cell = ws4.cell(1, col, header)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    for row_idx, row in enumerate(data.get('ads_details', []), 2):
+        for col_idx, value in enumerate(row, 1):
+            cell = ws4.cell(row_idx, col_idx, value)
+            if col_idx > 1 and col_formats4[col_idx - 1]:
+                cell.number_format = col_formats4[col_idx - 1]
+
+    wb.save(filepath)
+    print(f"Excel导出完成: {filepath}")
+
+
+def prepare_export_data(country_data, ads_data, returns, rates):
+    """准备导出数据"""
+    from collections import defaultdict
+    export_data = {
+        'country_summary': [],
+        'sku_details': [],
+        'returns_details': [],
+        'ads_details': []
+    }
+
+    country_returns = defaultdict(int)
+    for r in returns:
+        country_returns[r.get('country', '')] += 1
+
+    for country, d in country_data.items():
+        cfg = COUNTRY_MAP.get(country, {})
+        currency = cfg.get('currency', 'USD')
+
+        sales = d.get('total_sales', 0)
+        orders = int(d.get('orders', 0))
+        sessions = int(d.get('sessions', 0))
+        conversion_rate = d.get('conversion_rate', 0) / 100
+
+        aov = sales / orders if orders > 0 else 0
+        sales_usd = sales * rates['EUR_USD'] if currency == 'EUR' else sales * rates['GBP_USD'] if currency == 'GBP' else sales
+
+        ads = ads_data.get(country, {})
+        ads_spend = ads.get('spend', 0)
+        impressions = ads.get('impressions', 0)
+        clicks = ads.get('clicks', 0)
+        ads_sales = ads.get('sales', 0)
+        ads_orders = ads.get('orders', 0)
+
+        roi = ads_sales / ads_spend if ads_spend > 0 else 0
+        ctr = clicks / impressions if impressions > 0 else 0
+        cvr = ads_orders / clicks if clicks > 0 else 0
+        acos = ads_spend / ads_sales if ads_sales > 0 else 0
+
+        returns_count = country_returns.get(country, 0)
+
+        export_data['country_summary'].append([
+            cfg.get('name', country),
+            sales,
+            sales_usd,
+            orders,
+            aov,
+            conversion_rate if conversion_rate > 0 else '',
+            ads_spend,
+            roi if roi > 0 else '',
+            ctr if ctr > 0 else '',
+            cvr if cvr > 0 else '',
+            acos if acos > 0 else '',
+            returns_count
+        ])
+
+        for product in d.get('products', []):
+            sku_conv_rate = product.get('conv_rate', 0) / 100 if product.get('conv_rate', 0) > 0 else 0
+            sku_sessions = int(product.get('sessions', 0))
+            export_data['sku_details'].append([
+                product.get('sku', ''),
+                cfg.get('name', country),
+                product.get('quantity', 0),
+                product.get('sales', 0),
+                sku_conv_rate if sku_conv_rate > 0 else '',
+                sku_sessions
+            ])
+
+    for r in returns:
+        export_data['returns_details'].append([
+            r.get('sku', ''),
+            r.get('reason', ''),
+            r.get('warehouse', ''),
+            1
+        ])
+
+    for country, ads in ads_data.items():
+        cfg = COUNTRY_MAP.get(country, {})
+        spend = ads.get('spend', 0)
+        clicks = int(ads.get('clicks', 0))
+        impressions = int(ads.get('impressions', 0))
+        sales = ads.get('sales', 0)
+        orders = int(ads.get('orders', 0))
+
+        ctr = clicks / impressions if impressions > 0 else 0
+        cvr = orders / clicks if clicks > 0 else 0
+        acos = spend / sales if sales > 0 else 0
+
+        export_data['ads_details'].append([
+            cfg.get('name', country),
+            spend,
+            clicks,
+            impressions,
+            sales,
+            orders,
+            ctr if ctr > 0 else '',
+            cvr if cvr > 0 else '',
+            acos if acos > 0 else ''
+        ])
+
+    return export_data
+
 # ==================== 报告生成 ====================
-def generate_report(reports_dir, output_file=None, countries=None, period=None):
+def generate_report(reports_dir, output_file=None, countries=None, period=None, export_format=None, export_filename=None, eur_rate=None, gbp_rate=None):
     """生成HTML报告"""
     
     # 自动扫描
@@ -766,7 +1012,17 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
     
     # 汇率
     print("\n正在获取汇率...")
-    rates = fetch_exchange_rates()
+    # 汇率
+    if eur_rate is not None or gbp_rate is not None:
+        # 使用命令行指定的汇率
+        default_rates = fetch_exchange_rates()
+        rates = {
+            'EUR_USD': eur_rate if eur_rate is not None else default_rates.get('EUR_USD', 1.08),
+            'GBP_USD': gbp_rate if gbp_rate is not None else default_rates.get('GBP_USD', 1.27)
+        }
+        print(f"汇率 (自定义): EUR→USD: {rates['EUR_USD']:.4f}, GBP→USD: {rates['GBP_USD']:.4f}")
+    else:
+        rates = fetch_exchange_rates()
     
     # 加载各国数据
     country_data = {}
@@ -1509,8 +1765,146 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None):
     print(f"✅ 报告已生成: {output_file}")
     print(f"   国家: {', '.join([COUNTRY_MAP[c]['name'] for c in target_countries])}")
     print(f"   周期: {period}")
-    
+
+    # 导出数据（如果指定了导出格式）
+    if export_format:
+        export_data = prepare_export_data(country_data, ads_data, returns, rates)
+
+        if not export_filename:
+            safe_period = sanitize_filename(period)
+            if not safe_period:
+                safe_period = "report"
+            export_filename = f"amazon_report_{safe_period}"
+
+        if export_format == 'xlsx' and not export_filename.endswith('.xlsx'):
+            export_filename += '.xlsx'
+        elif export_format == 'csv' and not export_filename.endswith('.csv'):
+            export_filename += '.csv'
+
+        if export_format == 'csv':
+            export_to_csv(export_data, export_filename)
+        elif export_format == 'xlsx':
+            export_to_excel(export_data, export_filename, rates)
+
     return output_file
+
+
+def run_interactive_mode(args):
+    """交互式运行模式"""
+    import sys
+    print("\n" + "=" * 50)
+    print("   Amazon Report Analyzer")
+    print("   交互式模式")
+    print("=" * 50)
+
+    # 1. 询问目录
+    default_dir = "amazon"
+    if os.path.exists(default_dir):
+        default_dir_hint = f" (直接回车使用: {default_dir})"
+    else:
+        default_dir_hint = ""
+
+    dir_input = input(f"\n请输入数据报告目录路径{default_dir_hint}: ").strip()
+    if not dir_input:
+        dir_input = default_dir
+
+    args.dir = dir_input
+
+    # 2. 扫描目录获取可用国家
+    validated_dir = validate_report_dir(args.dir)
+    if validated_dir is None:
+        print(f"错误: 目录不存在或无效 - {args.dir}")
+        sys.exit(1)
+    args.dir = validated_dir
+
+    scan = scan_reports_directory(args.dir)
+    available_countries = scan.get('countries', [])
+
+    # 3. 询问国家
+    if available_countries:
+        country_names = []
+        for c in available_countries:
+            cname = COUNTRY_MAP.get(c, {}).get('name', c)
+            country_names.append(f"{c} ({cname})")
+
+        print(f"\n可用国家: {', '.join(country_names)}")
+        countries_input = input("请输入要分析的国家代码，用空格分隔 (直接回车分析全部): ").strip()
+
+        if countries_input:
+            args.countries = countries_input.upper().split()
+        else:
+            args.countries = None
+    else:
+        args.countries = None
+        print("\n未在目录中发现国家数据")
+
+    # 4. 询问周期
+    detected_period = scan.get('period', '')
+    if detected_period:
+        period_yyyymm = detected_period.replace('年', '').replace('月', '').replace('Q', '').replace(' ', '')
+        if len(period_yyyymm) >= 6:
+            period_yyyymm = period_yyyymm[:6]
+        period_hint = f" (直接回车使用: {period_yyyymm})"
+    else:
+        period_hint = ""
+
+    period_input = input(f'\n请输入报告周期 (yyyymm格式，如 202602){period_hint}: ').strip()
+    if not period_input:
+        period_input = detected_period
+
+    args.period = period_input if period_input else None
+
+    # 5. 询问是否导出数据
+    print("\n导出选项:")
+    print("  1 - 不导出")
+    print("  2 - 导出 CSV")
+    print("  3 - 导出 XLSX")
+    export_choice = input("请选择 (直接回车默认不导出): ").strip()
+
+    if export_choice == '2':
+        args.export = 'csv'
+    elif export_choice == '3':
+        args.export = 'xlsx'
+    else:
+        args.export = None
+
+    # 6. 询问导出文件名（如果需要导出）
+    if args.export:
+        export_hint = " (直接回车自动生成)"
+        export_input = input(f"\n请输入导出文件名{export_hint}: ").strip()
+        args.export_file = export_input if export_input else None
+    else:
+        args.export_file = None
+
+    # 7. 询问汇率（仅导出XLSX时）
+    args.eur_rate = None
+    args.gbp_rate = None
+    if args.export == 'xlsx':
+        print("\n汇率设置 (直接回车使用默认值):")
+        eur_input = input("  EUR→USD 汇率 (默认 1.0800): ").strip()
+        gbp_input = input("  GBP→USD 汇率 (默认 1.2700): ").strip()
+        if eur_input:
+            try:
+                args.eur_rate = float(eur_input)
+            except ValueError:
+                pass
+        if gbp_input:
+            try:
+                args.gbp_rate = float(gbp_input)
+            except ValueError:
+                pass
+
+    # 8. 询问输出文件名
+    output_hint = " (直接回车自动生成)"
+    output_input = input(f"\n请输入HTML报告文件名{output_hint}: ").strip()
+    args.output = output_input if output_input else None
+
+    print("\n" + "-" * 50)
+    print("正在分析...")
+    print("-" * 50 + "\n")
+
+    return args
+
 
 # ==================== 主程序 ====================
 def find_report_dirs(base_dir=None):
@@ -1660,7 +2054,16 @@ def main():
     parser.add_argument('--countries', '-c', nargs='+', help='指定国家代码 (DE IT FR ES UK)')
     parser.add_argument('--output', '-o', help='输出文件名')
     parser.add_argument('--period', '-p', help='报告周期名称，如 "2026年2月"')
+    parser.add_argument('--export', choices=['csv', 'xlsx'], help='导出格式: csv 或 xlsx')
+    parser.add_argument('--export-file', help='导出文件名 (不指定则自动生成)')
+    parser.add_argument('--eur-rate', type=float, help='EUR→USD 汇率 (如 1.08)')
+    parser.add_argument('--gbp-rate', type=float, help='GBP→USD 汇率 (如 1.27)')
+    parser.add_argument('--interactive', '-i', action='store_true', help='交互式模式')
     args = parser.parse_args()
+
+    # 交互式模式
+    if args.interactive or (not args.dir and not args.interactive and len(sys.argv) == 1):
+        args = run_interactive_mode(args)
 
     # 验证并规范化目录参数
     if args.dir:
@@ -1701,7 +2104,7 @@ def main():
     period = args.period if args.period else scan['period']
     
     # 生成报告
-    generate_report(reports_dir, args.output, args.countries, period)
+    generate_report(reports_dir, args.output, args.countries, period, args.export, args.export_file, args.eur_rate, args.gbp_rate)
     
     print("\n" + "=" * 50)
 
