@@ -582,9 +582,10 @@ def load_business_report(reports_dir, country):
             elif ('会话' in h or 'session' in h_lower) and 'sessions' not in indices:
                 if '总计' in h or 'total' in h_lower:
                     indices['sessions'] = i
-            elif ('商品会话百分比' in h or '转化率' in h or 'conversion' in h_lower) and 'conv_rate' not in indices:
-                if 'b2b' not in h_lower:
-                    indices['conv_rate'] = i
+            elif '商品会话百分比' in h and 'b2b' not in h_lower:
+                indices['conv_rate'] = i
+            elif 'conv_rate' not in indices and ('转化率' in h or 'conversion' in h_lower) and 'b2b' not in h_lower:
+                indices['conv_rate'] = i
 
         for row in reader:
             if len(row) <= max(indices.get('sku', 0), indices.get('qty', 0), indices.get('sales', 0)):
@@ -1687,14 +1688,14 @@ def generate_report(reports_dir, output_file=None, countries=None, period=None, 
             const currency = row.dataset.currency;
             const isEur = currency === 'EUR';
             const rate = isEur ? rateEur : rateGbp;
-            const defaultRate = isEur ? DEFAULT_EUR_RATE : DEFAULT_GBP_RATE;
+            const defaultRate = (isEur ? DEFAULT_EUR_RATE : DEFAULT_GBP_RATE) || 1;
 
             let origUsd = parseFloat(cells[idxSalesUsd].getAttribute('data-usd'));
             if (isNaN(origUsd) || origUsd === 0) {{
                 origUsd = parseFloat(cells[idxSalesUsd].textContent.replace(/[$,]/g, '')) || 0;
                 cells[idxSalesUsd].setAttribute('data-usd', origUsd);
             }}
-            const newUsd = origUsd * rate / defaultRate;
+            const newUsd = defaultRate > 0 ? origUsd * rate / defaultRate : origUsd;
             cells[idxSalesUsd].textContent = '$' + newUsd.toFixed(2).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
         }});
         
